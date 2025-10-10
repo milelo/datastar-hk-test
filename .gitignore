@@ -1,0 +1,7 @@
+/resources/public/css/main.css
+
+.*
+!.gitignore
+!/.vscode/
+!/.clj-kondo/
+/.clj-kondo/.cache

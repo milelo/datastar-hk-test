@@ -1,0 +1,37 @@
+{
+  "calva.replConnectSequences": [
+    {
+      "name": "datastar-hk-test",
+      "projectType": "deps.edn",
+      "autoSelectForJackIn": true,
+      "menuSelections": {
+        "cljAliases": [
+          "dev"
+        ],
+      }
+    }
+  ],
+  "tailwindCSS.includeLanguages": {
+    "clojure": "",
+    "clojurescript": ""
+  },
+  "tailwindCSS.experimental.classRegex": [
+    [
+      "\\[:[^.\\s]*((?:\\.[^.\\s\\]]*)+)[\\s\\]]",
+      "\\.([^.]*)"
+    ],
+    [
+      "\\:class\\s+(\\:[^\\s\\}]*)[\\s\\}]",
+      "[\\:.]([^.]*)"
+    ],
+    [
+      "\\:class\\s+(\"[^\\}\"]*)\"",
+      "[\"\\s]([^\\s\"]*)"
+    ],
+    [
+      "\\:class\\s+\\[(.*)\\]",
+      "[\"\\:]([^\\s\"]*)[\"]?"
+    ]
+  ],
+  "git.openRepositoryInParentFolders": "never",
+}
