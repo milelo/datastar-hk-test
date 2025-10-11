@@ -2,7 +2,7 @@
   (:require
    [clojure.pprint :refer [pprint]]
    [charred.api]
-   [dev.onionpancakes.chassis.core :as c]
+   [dev.onionpancakes.chassis.core :as c :refer [html]]
    [dev.onionpancakes.chassis.compiler :as cc]
    [reitit.ring :as rr]
    [reitit.core :as r]
@@ -16,38 +16,20 @@
 
 (def read-json (charred.api/parse-json-fn {:async? false :bufsize 1024 :key-fn keyword}))
 
-(defn html [hiccup]
-  (-> hiccup cc/compile c/html))
+(let [!count (atom 0)]
+  (defn new-content
+    "Generate new content"
+    []
+    (str (swap! !count inc) ": " (fake [:hitchhikers-guide-to-the-galaxy :marvin-quote]))))
 
-(defn new-content
-  "Generate new content"
-  []
-  (fake [:hitchhikers-guide-to-the-galaxy :marvin-quote]))
-
+;connections are associated with tabid
+;when the tab is eventualy closed tab specific state will have to be disposed.
 (def !connections (atom {}))
 
-(defn with-sse-broadcast [request f & args]
-  (let [tabid (get-in request [:signals :tabid])
-        ;get connection for current browser tab if there is one.
-        sse-gen (@!connections tabid)]
-    (pprint {:src ::with-sse-broadcast :from tabid})
-    (when-not sse-gen
-      ;cache a new connection
-      (->sse-response request
-                      {hk-gen/on-open
-                       (fn [sse-gen]
-                         (swap! !connections assoc tabid sse-gen) ;cache sse connection
-                         (d*/console-log! sse-gen (format "'connected; tabid: %s'", tabid)))
-                       hk-gen/on-close
-                       (fn on-close [_sse status-code]
-                         (swap! !connections dissoc tabid)
-                         (println "Connection closed status: " status-code)
-                         (println (format "remove connection from pool; tabid: %s", tabid)))}))
-    (doseq [[k sse-gen] @!connections]
-      ;send updates to all cached browser tabs:
-      (println "send to: " k)
-      (apply f sse-gen args))
-    {:status 202}))
+(defn broadcast [request f & args]
+  (doseq [[k sse-gen] @!connections]
+    (println "send to: " k)
+    (apply f sse-gen args)))
 
 (defn with-open-sse
   "open send and close sse"
@@ -57,6 +39,19 @@
                                     (d*/with-open-sse sse-gen
                                       (apply f sse-gen args)))}))
 
+(defn connect-handler [request]
+  (let [tabid (get-in request [:signals :tabid])]
+    (->sse-response request
+                    {hk-gen/on-open
+                     (fn [sse-gen]
+                       (swap! !connections assoc tabid sse-gen)
+                       (d*/console-log! sse-gen (format "'connected; tabid: %s'", tabid))) ;cache sse connection
+                     hk-gen/on-close
+                     (fn on-close [_sse-gen status-code]
+                       (swap! !connections dissoc tabid)
+                       (println "Connection closed status: " status-code)
+                       (println (format "remove connection from pool; tabid: %s", tabid)))})))
+
 (defn unique-pane [content]
   [:label#unique content])
 
@@ -65,8 +60,13 @@
 
 (defn view [request]
   [:div
-   [:div [:label.btn {:data-on-click (d*/sse-patch "/cmd/update-this")} "Update this tab"] (unique-pane "")]
-   [:div [:label.btn {:data-on-click (d*/sse-patch "/cmd/update-all")} "Update all tabs"] (shared-pane "")]])
+   [:div [:label "tabid: "][:label {:data-text "$tabid"}]]
+   [:div
+    [:label.btn {:data-on-click (d*/sse-patch "/cmd/update-this")} "Update this tab"]
+    (unique-pane "")]
+   [:div
+    [:label.btn {:data-on-click (d*/sse-patch "/cmd/update-all")} "Update all tabs"]
+    (shared-pane "")]])
 
 (defn page
   [request]
@@ -80,7 +80,8 @@
       [:script {:src d*/CDN-url :type "module"}]
       [:link {:rel "stylesheet" :href "/css/main.css"}]]
      [:body.p-8
-      {:data-on-signal-patch-filter "{include: /^tabid$/}";regex
+      {;:data-on-load (d*/sse-get "/connect")
+       :data-on-signal-patch-filter "{include: /^tabid$/}";regex
        ;request: /cmd/init when tabid is set
        :data-on-signal-patch (d*/sse-patch "/cmd/init")
        ;generate a tab specific ID that will persist through a page refresh.
@@ -92,18 +93,21 @@
 
 (defn index [request]
   ;Render the initial page.
-  (-> (page request) c/html ruresp/response (ruresp/content-type "text/html")))
+  (-> (page request) html ruresp/response (ruresp/content-type "text/html")))
 
 (defn on-update-this [request]
   (with-open-sse request d*/patch-elements! (-> (new-content) unique-pane html)))
 
 (defn on-update-all [request]
-  (with-sse-broadcast request d*/patch-elements! (-> (new-content) shared-pane html)))
+  (broadcast request d*/patch-elements! (-> (new-content) shared-pane html))
+  {:status 204})
 
 (defn on-init [request]
   ;Called after the initial page render and we have a tabid signal.
   ;tabid is used as a key to persist state and a connection.
-  (on-update-all request))
+  ;(on-update-all request)
+  (connect-handler request)
+  )
 
 (defn cmd-handler [request]
   (let [{:keys [cmd]} (get-in request [::r/match :path-params])
@@ -151,6 +155,8 @@
 (comment
   (stop!)
   (start! {:port 8085})
+  @!connections
+  (reset! !connections {})
   ;
   )
 
