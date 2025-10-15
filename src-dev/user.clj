@@ -1,9 +1,9 @@
 (ns user
   (:require
-   [clj-reload.core :as reload]
+   ;[clj-reload.core :as reload]
    app))
 
-(reload/init
+#_(reload/init
  {:dirs      ["src" "src-dev"]
   :no-reload '#{user}})
 
