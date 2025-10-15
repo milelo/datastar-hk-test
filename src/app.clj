@@ -27,6 +27,7 @@
 (def !connections (atom #{}))
 
 (defn broadcast [request f & args]
+  (println ::broadcast)
   (doseq [sse-gen @!connections]
     (println "send to: " (.hashCode sse-gen))
     (apply f sse-gen args)))
@@ -39,19 +40,6 @@
                                     (d*/with-open-sse sse-gen
                                       (apply f sse-gen args)))}))
 
-(defn connect-handler [request]
-  (->sse-response request
-                  {hk-gen/on-open
-                   (fn [sse-gen]
-                     (swap! !connections conj sse-gen)
-                     (println "connected: " (.hashCode sse-gen))
-                     ;(d*/console-log! sse-gen (str "connected: " (.hashCode sse-gen)))
-                     ) ;cache sse connection
-                   hk-gen/on-close
-                   (fn on-close [sse-gen status-code]
-                     (swap! !connections disj sse-gen)
-                     (println (format "SSE Disconnected %s; status: %s" (.hashCode sse-gen) status-code)))}))
-
 (defn unique-pane [content]
   [:label#unique content])
 
@@ -59,7 +47,7 @@
   [:label#shared content])
 
 (defn view [request]
-  [:div
+  [:div#view
    ;[:div [:label "tabid: "] [:label {:data-text "$tabid"}]]
    [:div
     [:label.btn {:data-on-click (d*/sse-patch "/cmd/update-this")} "Update this tab"]
@@ -91,10 +79,23 @@
       [:div.mx-auto.max-w-7xl.sm:px-6.lg:px-8
        (view request)]]]]))
 
+(defn connect-handler [request]
+  (->sse-response request
+                  {hk-gen/on-open
+                   (fn [sse-gen]
+                     (swap! !connections conj sse-gen)
+                     (d*/patch-elements! sse-gen (-> request view html))
+                     ;(d*/console-log! sse-gen (str "connected: " (.hashCode sse-gen)))
+                     (println "connected: " (.hashCode sse-gen))) ;cache sse connection
+                   hk-gen/on-close
+                   (fn on-close [sse-gen status-code]
+                     (swap! !connections disj sse-gen)
+                     (println (format "SSE Disconnected %s; status: %s" (.hashCode sse-gen) status-code)))}))
+
 (defn index [request]
   ;Render the initial page.
   (tap> ::index)
-  (-> (page request) html ruresp/response (ruresp/content-type "text/html")))
+  (-> request page html ruresp/response (ruresp/content-type "text/html")))
 
 (defn on-update-this [request]
   (with-open-sse request d*/patch-elements! (-> (new-content) unique-pane html)))
@@ -134,6 +135,7 @@
 
 (defn start! [opts]
   (stop!)
+  (reset! !connections #{})
   (let [port (or (:port opts) 8080)
         middleware [rmp/parameters-middleware]
         router (rr/router routes {:data {:middleware middleware}})
