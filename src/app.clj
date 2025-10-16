@@ -53,14 +53,13 @@
                      hk-gen/on-close
                      (fn on-close [_sse-gen status-code]
                        (swap! !state update tabid dissoc :sse-gen)
-                       (println "Connection closed status: " status-code)
-                       (println (format "remove connection from pool; tabid: %s", tabid)))})))
+                       (println "Connection closed status:" status-code "tabid:" tabid))})))
 
 (defn broadcast [_request f & args]
-  (doseq [[k state] @!state
-          :when (:sse-gen state)]
-    (pprint (assoc (dissoc state :sse-gen) :tabid k :src :broadcast))
-    (apply f (:sse-gen state) args)))
+  (doseq [[tabid {:keys [sse-gen] :as state}] @!state
+          :when sse-gen]
+    (pprint (assoc (dissoc state :sse-gen) :tabid tabid :src :broadcast))
+    (apply f sse-gen args)))
 
 (defn unique-pane [request]
   ;there is no tabid on the initial page render
