@@ -73,8 +73,7 @@
       [:script {:src d*/CDN-url :type "module"}]
       [:link {:rel "stylesheet" :href "/css/main.css"}]]
      [:body.p-8
-      {;:data-on-load (d*/sse-get "/connect")
-       :data-on-signal-patch-filter "{include: /^tabid$/}";regex
+      {:data-on-signal-patch-filter "{include: /^tabid$/}";regex
        ;request: /cmd/init when tabid is set
        :data-on-signal-patch (d*/sse-patch "/cmd/init")
        ;generate a tab specific ID that will persist through a page refresh.
