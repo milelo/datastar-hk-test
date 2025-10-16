@@ -16,20 +16,25 @@
 
 (def read-json (charred.api/parse-json-fn {:async? false :bufsize 1024 :key-fn keyword}))
 
-(let [!count (atom 0)]
-  (defn new-content
-    "Generate new content"
-    []
-    (str (swap! !count inc) ": " (fake [:hitchhikers-guide-to-the-galaxy :marvin-quote]))))
+(def !new-content-count (atom 0))
 
-;connections are associated with tabid
-;when the tab is eventualy closed tab specific state will have to be disposed.
-(def !connections (atom {}))
+(defn new-content
+  "Generate new content"
+  []
+  (str (swap! !new-content-count inc) ": " (fake [:hitchhikers-guide-to-the-galaxy :marvin-quote])))
 
-(defn broadcast [request f & args]
-  (doseq [[k sse-gen] @!connections]
-    (println "send to: " k)
-    (apply f sse-gen args)))
+(def !tab-states (atom {}))
+
+(def !shared-state (atom {}))
+
+(defn broadcast [_request f & args]
+  (doseq [[k state] @!tab-states
+          :when (:sse-gen state)]
+    (pprint (assoc (dissoc state :sse-gen) :tabid k :src :broadcast))
+    (apply f (:sse-gen state) args)))
+
+(defn tabid [request]
+  (get-in request [:signals :tabid]))
 
 (defn with-open-sse
   "open send and close sse"
@@ -39,34 +44,22 @@
                                     (d*/with-open-sse sse-gen
                                       (apply f sse-gen args)))}))
 
-(defn connect-handler [request]
-  (let [tabid (get-in request [:signals :tabid])]
-    (->sse-response request
-                    {hk-gen/on-open
-                     (fn [sse-gen]
-                       (swap! !connections assoc tabid sse-gen)
-                       (d*/console-log! sse-gen (format "'connected; tabid: %s'", tabid))) ;cache sse connection
-                     hk-gen/on-close
-                     (fn on-close [_sse-gen status-code]
-                       (swap! !connections dissoc tabid)
-                       (println "Connection closed status: " status-code)
-                       (println (format "remove connection from pool; tabid: %s", tabid)))})))
+(defn unique-pane [request]
+  ;there is no tabid on the initial page render
+  [:label#unique (get-in @!tab-states [(tabid request) :unique-content])])
 
-(defn unique-pane [content]
-  [:label#unique content])
-
-(defn shared-pane [content]
-  [:label#shared content])
+(defn shared-pane [_request]
+  [:label#shared (get @!shared-state :shared-content)])
 
 (defn view [request]
-  [:div
-   [:div [:label "tabid: "][:label {:data-text "$tabid"}]]
+  [:div#view
+   [:div [:label "tabid: "] [:label {:data-text "$tabid"}]]
    [:div
     [:label.btn {:data-on-click (d*/sse-patch "/cmd/update-this")} "Update this tab"]
-    (unique-pane "")]
+    (unique-pane request)]
    [:div
     [:label.btn {:data-on-click (d*/sse-patch "/cmd/update-all")} "Update all tabs"]
-    (shared-pane "")]])
+    (shared-pane request)]])
 
 (defn page
   [request]
@@ -91,30 +84,47 @@
       [:div.mx-auto.max-w-7xl.sm:px-6.lg:px-8
        (view request)]]]]))
 
+(defn on-connect [request]
+  ;Called after the initial page render and we have a tabid signal.
+  ;tabid is used as a key to persist state and a connection.
+  ;Note: the ->sse-response closes the sse channel when the windows is hidden.
+  (let [tabid (tabid request)]
+    (->sse-response request
+                    {hk-gen/on-open
+                     (fn [sse-gen]
+                       ;connections are associated with tabid
+                       ;when the tab is eventualy closed tab specific state will have to
+                       ;be disposed with something like com.github.ben-manes.caffeine/caffeine (not implemented).
+                       (swap! !tab-states assoc-in [tabid :sse-gen] sse-gen)
+                       ;render the view now that we have a tabid to retrieve the state.
+                       (d*/patch-elements! sse-gen (-> request view html))
+                       (d*/console-log! sse-gen (format "'connected; tabid: %s'", tabid))) ;cache sse connection
+                     hk-gen/on-close
+                     (fn on-close [_sse-gen status-code]
+                       (swap! !tab-states update tabid dissoc :sse-gen)
+                       (println "Connection closed status: " status-code)
+                       (println (format "remove connection from pool; tabid: %s", tabid)))})))
+
 (defn index [request]
   ;Render the initial page.
+  ;Note there is no tabid yet so data will has to be rendered in on-connect.
   (-> (page request) html ruresp/response (ruresp/content-type "text/html")))
 
 (defn on-update-this [request]
-  (with-open-sse request d*/patch-elements! (-> (new-content) unique-pane html)))
+  (swap! !tab-states assoc-in [(tabid request) :unique-content] (new-content))
+  (with-open-sse request d*/patch-elements! (-> request unique-pane html)))
 
 (defn on-update-all [request]
-  (broadcast request d*/patch-elements! (-> (new-content) shared-pane html))
+  (swap! !shared-state assoc :shared-content (new-content))
+  (broadcast request d*/patch-elements! (-> request shared-pane html))
   {:status 204})
-
-(defn on-init [request]
-  ;Called after the initial page render and we have a tabid signal.
-  ;tabid is used as a key to persist state and a connection.
-  ;(on-update-all request)
-  (connect-handler request)
-  )
 
 (defn cmd-handler [request]
   (let [{:keys [cmd]} (get-in request [::r/match :path-params])
         request (assoc request :signals (some-> request d*/get-signals read-json))]
-    (println (format "cmd: %s, from tabid: %s" cmd (get-in request [:signals :tabid])))
+    (println (format "cmd: %s, from tabid: %s" cmd (tabid request)))
     ((case (keyword cmd)
-       :init on-init
+       :init on-connect
        :update-this on-update-this
        :update-all on-update-all) request)))
 
@@ -131,6 +141,9 @@
 
 (defn start! [opts]
   (stop!)
+  (reset! !tab-states {})
+  (reset! !shared-state {})
+  (reset! !new-content-count 0)
   (let [port (or (:port opts) 8080)
         middleware [rmp/parameters-middleware]
         router (rr/router routes {:data {:middleware middleware}})
@@ -155,8 +168,8 @@
 (comment
   (stop!)
   (start! {:port 8085})
-  @!connections
-  (reset! !connections {})
+  @!shared-state
+  @!tab-states
   ;
   )
 
