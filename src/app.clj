@@ -49,7 +49,7 @@
                        ;be disposed with something like com.github.ben-manes.caffeine/caffeine (not implemented).
                        (swap! !state assoc-in [tabid :sse-gen] sse-gen)
                        ;render the view now that we have a tabid to retrieve the state.
-                       (apply f sse-gen args)) ;cache sse connection
+                       (apply f sse-gen args))
                      hk-gen/on-close
                      (fn on-close [_sse-gen status-code]
                        (swap! !state update tabid dissoc :sse-gen)
@@ -59,7 +59,8 @@
   (doseq [[tabid {:keys [sse-gen] :as state}] @!state
           :when sse-gen]
     (pprint (assoc (dissoc state :sse-gen) :tabid tabid :src :broadcast))
-    (apply f sse-gen args)))
+    (apply f sse-gen args))
+  {:status 204})
 
 (defn unique-pane [request]
   ;there is no tabid on the initial page render
@@ -106,6 +107,7 @@
   (-> request page html ruresp/response (ruresp/content-type "text/html")))
 
 (defn on-init [request]
+  ;initialise now we have a tab ID
   (connect request (fn [sse-gen]
                      (d*/patch-elements! sse-gen (-> request view html))
                      (d*/console-log! sse-gen (format "'connected; tabid: %s'", (tabid request))))))
@@ -116,8 +118,7 @@
 
 (defn on-update-all [request]
   (swap! !state assoc-in [:shared :shared-content] (new-content))
-  (broadcast request d*/patch-elements! (-> request shared-pane html))
-  {:status 204})
+  (broadcast request d*/patch-elements! (-> request shared-pane html)))
 
 (defn cmd-handler [request]
   (let [{:keys [cmd]} (get-in request [::r/match :path-params])
