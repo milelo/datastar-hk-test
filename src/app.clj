@@ -108,7 +108,7 @@
 (defn on-init [request]
   (connect request (fn [sse-gen]
                      (d*/patch-elements! sse-gen (-> request view html))
-                     (d*/console-log! sse-gen (format "'connected; tabid: %s'", tabid)))))
+                     (d*/console-log! sse-gen (format "'connected; tabid: %s'", (tabid request))))))
 
 (defn on-update-this [request]
   (swap! !state assoc-in [(tabid request) :unique-content] (new-content))
