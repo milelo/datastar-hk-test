@@ -55,7 +55,7 @@
                        (swap! !state update tabid dissoc :sse-gen)
                        (println "Connection closed status:" status-code "tabid:" tabid))})))
 
-(defn broadcast [_request f & args]
+(defn broadcast [f & args]
   (doseq [[tabid {:keys [sse-gen] :as state}] @!state
           :when sse-gen]
     (pprint (assoc (dissoc state :sse-gen) :tabid tabid :src :broadcast))
@@ -118,7 +118,7 @@
 
 (defn on-update-all [request]
   (swap! !state assoc-in [:shared :shared-content] (new-content))
-  (broadcast request d*/patch-elements! (-> request shared-pane html)))
+  (broadcast d*/patch-elements! (-> request shared-pane html)))
 
 (defn cmd-handler [request]
   (let [{:keys [cmd]} (get-in request [::r/match :path-params])
