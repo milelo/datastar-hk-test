@@ -58,7 +58,7 @@
 (defn broadcast [f & args]
   (doseq [[tabid {:keys [sse-gen] :as state}] @!state
           :when sse-gen]
-    (pprint (assoc (dissoc state :sse-gen) :tabid tabid :src :broadcast))
+    (pprint (-> state (dissoc :sse-gen) (assoc :tabid tabid :src :broadcast)))
     (apply f sse-gen args))
   {:status 204})
 
@@ -127,7 +127,8 @@
     ((case (keyword cmd)
        :init on-init
        :update-this on-update-this
-       :update-all on-update-all) request)))
+       :update-all on-update-all
+       (constantly {:status 404})) request)))
 
 (def routes
   [["/" {:get  #'index}]
